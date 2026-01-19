@@ -33,12 +33,15 @@ export class ReleaseService {
         const { env, version, buildNumber: explicitBuildNumber, channelId, userId, threadTs } = request;
         let statusThreadTs: string | undefined = threadTs;
 
+        const envIcon = this.getEnvIcon(env);
+
         try {
             // Send the initial message and capture its timestamp to use as the thread parent for subsequent updates
             const parentMsgTs = await this.sendSlackMessage(
                 channelId,
-                `🚀 *Starting Release to ${env.toUpperCase()}*...\nUser: <@${userId}>\nTarget Version: ${version || 'Current'}\nTarget Build: ${explicitBuildNumber || 'Auto-increment'}`,
-                threadTs
+                `${envIcon} *Starting Release ${env.toUpperCase()}*...\nUser: <@${userId}>\nTarget Version: ${version || 'Current'}\nTarget Build: ${explicitBuildNumber || 'Auto-increment'}`,
+                threadTs,
+                envIcon
             );
 
             // If a threadTs was provided (e.g., triggered from a thread), keep using it.
@@ -51,13 +54,13 @@ export class ReleaseService {
             }
 
             // 1. Git Operations
-            await this.updateStatus(channelId, statusThreadTs, '🌿 Checking out code...');
+            await this.updateStatus(channelId, statusThreadTs, '🌿 Checking out code...', envIcon);
             await this.gitCheckout(releaseConfig.branch);
 
             // 2. Version Bump
             let buildNumber = 'latest';
             if (version) {
-                await this.updateStatus(channelId, statusThreadTs, `🏷️ Bumping version to ${version} (Build: ${explicitBuildNumber || 'Auto'})...`);
+                await this.updateStatus(channelId, statusThreadTs, `🏷️ Bumping version to ${version} (Build: ${explicitBuildNumber || 'Auto'})...`, envIcon);
                 // Note: Modified logic to handle build number correctly
                 buildNumber = await this.bumpVersion(version, explicitBuildNumber, releaseConfig);
             } else {
@@ -66,32 +69,36 @@ export class ReleaseService {
             }
 
             // 3. Build & Archive
-            await this.updateStatus(channelId, statusThreadTs, `🏗️ Building Archive for ${releaseConfig.scheme} (Build: ${buildNumber})...`);
+            const waitingGif = this.getRandomWaitingGif();
+            await this.updateStatus(channelId, statusThreadTs, `🏗️ Building Archive for ${releaseConfig.scheme} (Build: ${buildNumber})...\n${waitingGif}`, envIcon);
             const archivePath = await this.buildArchive(releaseConfig.scheme, releaseConfig.configuration);
 
             // 4. Export & Upload
+            const successGif = this.getRandomSuccessGif();
             if (config.appStore.apiKeyId && config.appStore.issuerId) {
                 // Manual Export + Altool
-                await this.updateStatus(channelId, statusThreadTs, '📦 Exporting IPA...');
+                await this.updateStatus(channelId, statusThreadTs, '📦 Exporting IPA...', envIcon);
                 const ipaPath = await this.exportIPA(archivePath, releaseConfig.exportMethod, false);
 
-                await this.updateStatus(channelId, statusThreadTs, '✈️ Uploading to TestFlight (via API Key)...');
+                await this.updateStatus(channelId, statusThreadTs, '✈️ Uploading to TestFlight (via API Key)...', envIcon);
                 await this.uploadToTestFlight(ipaPath);
 
                 await this.sendSlackMessage(
                     channelId,
-                    `✅ *Release Complete!* 🚀\nEnvironment: ${env}\nVersion: ${version || 'Updated'}\nBuild: ${buildNumber}\nScheme: ${releaseConfig.scheme}\nStatus: Uploaded to TestFlight`,
-                    statusThreadTs
+                    `✅ *Release Complete!* ${envIcon}\nEnvironment: ${env}\nVersion: ${version || 'Updated'}\nBuild: ${buildNumber}\nScheme: ${releaseConfig.scheme}\nStatus: Uploaded to TestFlight\n${successGif}`,
+                    statusThreadTs,
+                    envIcon
                 );
             } else {
                 // Native Xcode Upload
-                await this.updateStatus(channelId, statusThreadTs, '✈️ Exporting & Uploading to TestFlight (via Local Xcode)...');
+                await this.updateStatus(channelId, statusThreadTs, '✈️ Exporting & Uploading to TestFlight (via Local Xcode)...', envIcon);
                 await this.exportIPA(archivePath, releaseConfig.exportMethod, true); // true = upload
 
                 await this.sendSlackMessage(
                     channelId,
-                    `✅ *Release Complete!* 🚀\nEnvironment: ${env}\nVersion: ${version || 'Updated'}\nBuild: ${buildNumber}\nScheme: ${releaseConfig.scheme}\nStatus: Uploaded via Local Xcode`,
-                    statusThreadTs
+                    `✅ *Release Complete!* ${envIcon}\nEnvironment: ${env}\nVersion: ${version || 'Updated'}\nBuild: ${buildNumber}\nScheme: ${releaseConfig.scheme}\nStatus: Uploaded via Local Xcode\n${successGif}`,
+                    statusThreadTs,
+                    envIcon
                 );
             }
 
@@ -100,10 +107,42 @@ export class ReleaseService {
             await this.sendSlackMessage(
                 channelId,
                 `❌ *Release Failed* \nError: ${error.message}`,
-                statusThreadTs || threadTs
+                statusThreadTs || threadTs,
+                envIcon
             );
         } finally {
             this.isProcessing = false;
+        }
+    }
+
+    private getRandomSuccessGif(): string {
+        const gifs = [
+            'https://media.giphy.com/media/t3sZxY5zS5B0z5zMIz/giphy.gif', // Success
+            'https://media.giphy.com/media/g9582DNuQppxC/giphy.gif', // Leo Cheers
+            'https://media.giphy.com/media/nVVVMDcVaoFCo/giphy.gif', // Fireworks
+            'https://media.giphy.com/media/xT5LMHxhOfscxPfIfm/giphy.gif', // Success Kid
+            'https://media.giphy.com/media/11sBLVxNs7v6WA/giphy.gif', // Minions cheering
+            'https://media.giphy.com/media/l0HlHFRbmaZtBRhXG/giphy.gif' // Obama mic drop
+        ];
+        return gifs[Math.floor(Math.random() * gifs.length)];
+    }
+
+    private getRandomWaitingGif(): string {
+        const gifs = [
+            'https://media.giphy.com/media/l0HlOaQcLJ2hHpYzg/giphy.gif', // Waiting skeleton
+            'https://media.giphy.com/media/tXL4FHPSnVJ0A/giphy.gif', // Waiting Mr Bean
+            'https://media.giphy.com/media/26brv0ThflsHCqDrG/giphy.gif', // Clock ticking
+            'https://media.giphy.com/media/pFZTlnO0vkhSum/giphy.gif', // Spongebob waiting
+            'https://media.giphy.com/media/3o7bu3XilJ5BOiSGic/giphy.gif' // Loading circle
+        ];
+        return gifs[Math.floor(Math.random() * gifs.length)];
+    }
+
+    private getEnvIcon(env: string): string {
+        switch (env.toLowerCase()) {
+            case 'kraken': return ':kraken:';
+            case 'titan': return ':titan:';
+            default: return ':rocket:';
         }
     }
 
@@ -128,12 +167,13 @@ export class ReleaseService {
         }
     }
 
-    private async sendSlackMessage(channelId: string, text: string, threadTs?: string): Promise<string | undefined> {
+    private async sendSlackMessage(channelId: string, text: string, threadTs?: string, iconEmoji?: string): Promise<string | undefined> {
         try {
             const result = await this.app.client.chat.postMessage({
                 channel: channelId,
                 text: text,
-                thread_ts: threadTs
+                thread_ts: threadTs,
+                icon_emoji: iconEmoji
             });
             return result.ts;
         } catch (error) {
@@ -142,8 +182,8 @@ export class ReleaseService {
         }
     }
 
-    private async updateStatus(channelId: string, threadTs: string | undefined, message: string): Promise<void> {
-        await this.sendSlackMessage(channelId, message, threadTs);
+    private async updateStatus(channelId: string, threadTs: string | undefined, message: string, iconEmoji?: string): Promise<void> {
+        await this.sendSlackMessage(channelId, message, threadTs, iconEmoji);
     }
 
     private async runCommand(command: string): Promise<string> {

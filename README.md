@@ -28,13 +28,21 @@ graph TD
     ReleaseService -.->|Status Updates| Slack
 ```
 
-### Components
-1.  **Slack Adapter (`src/adapters/SlackAdapter.ts`)**: Listens for the `/release` slash command and routes requests.
-2.  **Release Service (`src/services/ReleaseService.ts`)**: The core logic engine that orchestrates the release pipeline:
-    *   **Git Operations:** Stashes changes, checkouts release branches, and pulls latest code.
-    *   **Versioning:** Bumps `marketing-version` and `build-number` using Apple's `agvtool`.
-    *   **Building:** Generates an `.xcarchive` using `xcodebuild`.
-    *   **Distribution:** Exports the IPA and uploads it to TestFlight (via local Xcode accounts or API Key).
+## 🎨 Bot Personality
+
+The bot is designed to be engaging and visual:
+
+### Dynamic Icons
+The bot changes its avatar and emoji indicators based on the environment being released:
+*   **Kraken**: Uses `:kraken:` 🐙
+*   **Titan**: Uses `:titan:` 🤖
+*   **Other**: Uses `:rocket:` 🚀
+
+> **Note:** Requires `chat:write.customize` scope in Slack App settings to enable dynamic avatar changing.
+
+### Animated Status
+*   **Waiting**: Displays random "waiting" GIFs (e.g., Mr. Bean, Spongebob) during the long build/archive process to make the wait feel shorter.
+*   **Success**: Celebrates successful releases with random "party/success" GIFs attached to the final completion message.
 
 ## 🚀 Setup & Installation
 
@@ -95,13 +103,13 @@ In any Slack channel where the bot is invited:
     ```slack
     /release kraken 2.5.0 10
     ```
-    *Effect: Bumps to version 2.5.0 (Build 10), commits/pushes to git, builds, and uploads to TestFlight.*
+    *Effect: Bumps to version 2.5.0 (Build 10), commits/pushes to git, builds, and uploads to TestFlight. Shows Kraken icon.*
 
 *   **Auto-Increment Build:**
     ```slack
     /release titan 2.4.1
     ```
-    *Effect: Bumps to 2.4.1 and auto-increments the build number based on current count.*
+    *Effect: Bumps to 2.4.1 and auto-increments the build number based on current count. Shows Titan/Robot icon.*
 
 ## 📂 Project Structure
 
