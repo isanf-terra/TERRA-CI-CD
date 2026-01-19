@@ -31,13 +31,19 @@ export class ReleaseService {
 
         this.isProcessing = true;
         const { env, version, buildNumber: explicitBuildNumber, channelId, userId, threadTs } = request;
+        let statusThreadTs: string | undefined = threadTs;
 
         try {
-            await this.sendSlackMessage(
+            // Send the initial message and capture its timestamp to use as the thread parent for subsequent updates
+            const parentMsgTs = await this.sendSlackMessage(
                 channelId,
                 `🚀 *Starting Release to ${env.toUpperCase()}*...\nUser: <@${userId}>\nTarget Version: ${version || 'Current'}\nTarget Build: ${explicitBuildNumber || 'Auto-increment'}`,
                 threadTs
             );
+
+            // If a threadTs was provided (e.g., triggered from a thread), keep using it.
+            // Otherwise, use the timestamp of the new message to thread replies under it.
+            statusThreadTs = threadTs || parentMsgTs;
 
             const releaseConfig = this.getEnvConfig(env);
             if (!releaseConfig) {
@@ -45,13 +51,13 @@ export class ReleaseService {
             }
 
             // 1. Git Operations
-            await this.updateStatus(channelId, threadTs, '🌿 Checking out code...');
+            await this.updateStatus(channelId, statusThreadTs, '🌿 Checking out code...');
             await this.gitCheckout(releaseConfig.branch);
 
             // 2. Version Bump
             let buildNumber = 'latest';
             if (version) {
-                await this.updateStatus(channelId, threadTs, `🏷️ Bumping version to ${version} (Build: ${explicitBuildNumber || 'Auto'})...`);
+                await this.updateStatus(channelId, statusThreadTs, `🏷️ Bumping version to ${version} (Build: ${explicitBuildNumber || 'Auto'})...`);
                 // Note: Modified logic to handle build number correctly
                 buildNumber = await this.bumpVersion(version, explicitBuildNumber, releaseConfig);
             } else {
@@ -60,32 +66,32 @@ export class ReleaseService {
             }
 
             // 3. Build & Archive
-            await this.updateStatus(channelId, threadTs, `🏗️ Building Archive for ${releaseConfig.scheme} (Build: ${buildNumber})...`);
+            await this.updateStatus(channelId, statusThreadTs, `🏗️ Building Archive for ${releaseConfig.scheme} (Build: ${buildNumber})...`);
             const archivePath = await this.buildArchive(releaseConfig.scheme, releaseConfig.configuration);
 
             // 4. Export & Upload
             if (config.appStore.apiKeyId && config.appStore.issuerId) {
                 // Manual Export + Altool
-                await this.updateStatus(channelId, threadTs, '📦 Exporting IPA...');
+                await this.updateStatus(channelId, statusThreadTs, '📦 Exporting IPA...');
                 const ipaPath = await this.exportIPA(archivePath, releaseConfig.exportMethod, false);
 
-                await this.updateStatus(channelId, threadTs, '✈️ Uploading to TestFlight (via API Key)...');
+                await this.updateStatus(channelId, statusThreadTs, '✈️ Uploading to TestFlight (via API Key)...');
                 await this.uploadToTestFlight(ipaPath);
 
                 await this.sendSlackMessage(
                     channelId,
                     `✅ *Release Complete!* 🚀\nEnvironment: ${env}\nVersion: ${version || 'Updated'}\nBuild: ${buildNumber}\nScheme: ${releaseConfig.scheme}\nStatus: Uploaded to TestFlight`,
-                    threadTs
+                    statusThreadTs
                 );
             } else {
                 // Native Xcode Upload
-                await this.updateStatus(channelId, threadTs, '✈️ Exporting & Uploading to TestFlight (via Local Xcode)...');
+                await this.updateStatus(channelId, statusThreadTs, '✈️ Exporting & Uploading to TestFlight (via Local Xcode)...');
                 await this.exportIPA(archivePath, releaseConfig.exportMethod, true); // true = upload
 
                 await this.sendSlackMessage(
                     channelId,
                     `✅ *Release Complete!* 🚀\nEnvironment: ${env}\nVersion: ${version || 'Updated'}\nBuild: ${buildNumber}\nScheme: ${releaseConfig.scheme}\nStatus: Uploaded via Local Xcode`,
-                    threadTs
+                    statusThreadTs
                 );
             }
 
@@ -94,7 +100,7 @@ export class ReleaseService {
             await this.sendSlackMessage(
                 channelId,
                 `❌ *Release Failed* \nError: ${error.message}`,
-                threadTs
+                statusThreadTs || threadTs
             );
         } finally {
             this.isProcessing = false;
@@ -108,29 +114,31 @@ export class ReleaseService {
                     scheme: 'Terra Staging JP',
                     branch: config.project.krakenBranch,
                     configuration: 'Release',
-                    exportMethod: 'app-store'
+                    exportMethod: 'app-store-connect'
                 };
             case 'titan':
                 return {
                     scheme: 'iosApp',
                     branch: config.project.titanBranch,
                     configuration: 'Release',
-                    exportMethod: 'app-store'
+                    exportMethod: 'app-store-connect'
                 };
             default:
                 return null;
         }
     }
 
-    private async sendSlackMessage(channelId: string, text: string, threadTs?: string): Promise<void> {
+    private async sendSlackMessage(channelId: string, text: string, threadTs?: string): Promise<string | undefined> {
         try {
-            await this.app.client.chat.postMessage({
+            const result = await this.app.client.chat.postMessage({
                 channel: channelId,
                 text: text,
                 thread_ts: threadTs
             });
+            return result.ts;
         } catch (error) {
             console.error('[ReleaseService] Failed to send Slack message:', error);
+            return undefined;
         }
     }
 
@@ -202,7 +210,7 @@ export class ReleaseService {
             }
         }
 
-        const command = `xcodebuild ${sourceFlag} -scheme "${scheme}" -configuration ${configuration} -archivePath "${archivePath}" archive -allowProvisioningUpdates`;
+        const command = `xcodebuild ${sourceFlag} -scheme "${scheme}" -configuration ${configuration} -archivePath "${archivePath}" archive -allowProvisioningUpdates -destination "generic/platform=iOS"`;
         await this.runCommand(command);
         return archivePath;
     }
@@ -223,8 +231,6 @@ export class ReleaseService {
     <string>${method}</string>
     <key>destination</key>
     <string>${destination}</string>
-    <key>signingStyle</key>
-    <string>automatic</string>
     <key>stripSwiftSymbols</key>
     <true/>
     <key>compileBitcode</key>

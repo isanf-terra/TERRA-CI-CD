@@ -1,72 +1,118 @@
-# Terra Mobile CI/CD Service
+# TERRA CI/CD Automation
 
-A lightweight, standalone Node.js service for automating mobile app releases via Slack commands.
-Currently supports **iOS** (TestFlight) releases using `agvtool` and `xcodebuild`.
+This repository hosts a Slack-based CI/CD bot designed to automate the release process for Terra Charge mobile applications (iOS). It leverages `xcrun agvtool` for versioning and `xcodebuild` for archiving and uploading builds to TestFlight.
 
-## Features
-- 🚀 **Slack Integration**: Trigger releases directly from Slack using `/release`.
-- 🔄 **Automated Versioning**: Auto-increments build numbers or accepts explicit manual build numbers.
-- 🏗 **Build & Archive**: Automatically builds `Release` configuration and creates `.xcarchive`.
-- 📤 **TestFlight Upload**: 
-  - Supports API Key upload (if configured).
-  - Fallback to native Xcode upload (uses local Mac session).
+## 🏗 Architecture
 
-## Prerequisites
-- **macOS** with Xcode installed.
-- **Node.js** (v18+).
-- **Git** configured with access to the target mobile project.
-- **agvtool** enabled in your Xcode project settings.
+The system follows a simple event-driven architecture powered by Slack Bolt (Socket Mode).
 
-## Installation
+```mermaid
+graph TD
+    User((Developer)) -->|"/release kraken"| Slack[Slack]
+    Slack -- Socket Mode --> Bot[TERRA CI/CD Bot]
+    
+    subgraph "CI/CD Service"
+        Bot -->|Ack| Slack
+        Bot --> ReleaseService[Release Service]
+        ReleaseService -->|1. Git Checkout & Pull| Git[Git Repo]
+        ReleaseService -->|2. Bump Version| Agvtool[agvtool]
+        ReleaseService -->|3. Build Archive| Xcode[xcodebuild archive]
+        ReleaseService -->|4. Export & Upload| Altool[xcodebuild / altool]
+    end
 
-1.  **Clone the repository**:
-    ```bash
-    git clone <repo-url>
-    cd terra-mobile-cicd
-    ```
+    subgraph "External"
+        Git <-->|Push Version| GitHub[GitHub]
+        Altool -->|Upload IPA| TestFlight[TestFlight]
+    end
 
-2.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
+    ReleaseService -.->|Status Updates| Slack
+```
 
-3.  **Configuration**:
-    Copy `.env.example` to `.env` and configure your secrets:
+### Components
+1.  **Slack Adapter (`src/adapters/SlackAdapter.ts`)**: Listens for the `/release` slash command and routes requests.
+2.  **Release Service (`src/services/ReleaseService.ts`)**: The core logic engine that orchestrates the release pipeline:
+    *   **Git Operations:** Stashes changes, checkouts release branches, and pulls latest code.
+    *   **Versioning:** Bumps `marketing-version` and `build-number` using Apple's `agvtool`.
+    *   **Building:** Generates an `.xcarchive` using `xcodebuild`.
+    *   **Distribution:** Exports the IPA and uploads it to TestFlight (via local Xcode accounts or API Key).
+
+## 🚀 Setup & Installation
+
+### Prerequisites
+*   Node.js (v18+)
+*   Xcode (v15+)
+*   Git configured with SSH or HTTPS credentials.
+*   **Slack App** configured with Socket Mode and Slash Commands.
+
+### Configuration
+1.  Clone this repository.
+2.  Copy `.env.example` to `.env`:
     ```bash
     cp .env.example .env
     ```
+3.  Fill in the required variables:
+    ```env
+    # Slack Credentials
+    SLACK_BOT_TOKEN=xoxb-...
+    SLACK_APP_TOKEN=xapp-...
+    SLACK_SIGNING_SECRET=...
+
+    # Project Path (Absolute path to your iOS project folder containing .xcodeproj)
+    PROJECT_ROOT=/Users/yourname/TMC_Mobile_JP/iosApp
+
+    # Release Branches
+    RELEASE_BRANCH_KRAKEN=develop  # or your specific release branch
+    RELEASE_BRANCH_TITAN=main
     
-    *   `SLACK_BOT_TOKEN` & `SLACK_APP_TOKEN`: From your Slack App configuration.
-    *   `PROJECT_ROOT`: Absolute path to your iOS project folder (containing `.xcodeproj` or `.xcworkspace`).
-    *   `RELEASE_BRANCH_KRAKEN` / `RELEASE_BRANCH_TITAN`: Target branches for deployment.
+    # App Store Connect (Optional - for API Key Upload)
+    APP_STORE_CONNECT_API_KEY_ID=...
+    APP_STORE_CONNECT_ISSUER_ID=...
+    ```
 
-## Usage
-
-Start the service:
+### Running the Bot
 ```bash
+# Install dependencies
+npm install
+
+# Start the bot
+npm start
+
+# For development (hot reload)
 npm run dev
 ```
 
-### Slack Command
-Use the `/release` command in your configured Slack channel:
+## 🤖 Usage
 
-```
+In any Slack channel where the bot is invited:
+
+```slack
 /release <environment> [version] [build_number]
 ```
 
-**Arguments:**
-*   `environment`: `kraken` (Staging) or `titan` (Production).
-*   `version` (Optional): Marketing version (e.g., `2.5.0`). If omitted, keeps current.
-*   `build_number` (Optional): Explicit build number (e.g., `6`). If omitted, auto-increments.
-
 **Examples:**
-*   `/release kraken 2.5.0` -> Bumps to 2.5.0, auto-increments build number.
-*   `/release kraken 2.5.0 6` -> Bumps to 2.5.0, sets build number to 6.
-*   `/release titan` -> Keeps current version, auto-increments build number.
 
-## Architecture
-This service uses `@slack/bolt` to listen for Socket Mode events.
-It executes shell commands (`git`, `xcodebuild`, `xcrun agvtool`) on the host machine to perform the build process.
+*   **Standard Release:**
+    ```slack
+    /release kraken 2.5.0 10
+    ```
+    *Effect: Bumps to version 2.5.0 (Build 10), commits/pushes to git, builds, and uploads to TestFlight.*
 
-## License
-Private
+*   **Auto-Increment Build:**
+    ```slack
+    /release titan 2.4.1
+    ```
+    *Effect: Bumps to 2.4.1 and auto-increments the build number based on current count.*
+
+## 📂 Project Structure
+
+```
+├── src
+│   ├── adapters       # Interfaces with external tools (Slack)
+│   ├── domain         # Types and Interfaces
+│   ├── services       # Core business logic (ReleaseService)
+│   ├── config.ts      # Configuration loader
+│   └── index.ts       # Entry point
+├── .env.example       # Template for environment variables
+├── package.json       # Dependencies
+└── tsconfig.json      # TypeScript configuration
+```
